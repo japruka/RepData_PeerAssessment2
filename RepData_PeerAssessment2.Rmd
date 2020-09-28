@@ -1,0 +1,218 @@
+---
+title: "RepData_PeerAssessment2.Rmd"
+author: "Me"
+date: "2020/9/24"
+output: pdf_document
+---
+
+##Synonpsis
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. 
+This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+What I want  to do is to identify which type of events, indicated in the EVTYPE variable, causes most harmful effects with respect to population health, and causes the greatest economic consequences.
+
+## Data Processing
+
+At first, I try to set the environment in order to analyze the dataset properly.
+the "repdata_data_StormData.csv.bz2" can be downloaded at the coursera course project page.
+and then you can directly read the file by "read.csv()".
+There are 902297 rows and 37 columns in the csv file.
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+Storm<-read.csv("repdata_data_StormData.csv.bz2")
+dim(Storm)
+```
+And then, make a subset properly.
+In Jan. 1996, all EVTYPE appear, so the subset should contain after Jan 1996.
+And, we should omit some unnecessary variables.
+```{r}
+dat<-as.Date(Storm$BGN_DATE, format = "%m/%d/%Y %H:%M:%S")
+Storm$BGN_DATE<-sort(dat)
+rp<-subset(Storm,Storm$BGN_DATE>="1996-1-1",select=c("BGN_DATE","EVTYPE","MAG","FATALITIES","INJURIES","PROPDMG","PROPDMGEXP", "CROPDMG","CROPDMGEXP"))
+```
+now, there are 653530 rows and 9 columns in the "rp" dataset.
+Secondly, we should correct "CROPDMGEXP" and "PROPDMGEXP" in order to make the "CROPDMG" and "PROPDMG" measurable and comparable.
+```{r}
+unique(rp$PROPDMGEXP)
+unique(rp$CROPDMGEXP)
+```
+There are five symbols "K" ""  "M" "B" "0".
+According to (https://rstudio-pubs-static.s3.amazonaws.com/58957_37b6723ee52b455990e149edde45e5b6.html),
+the symbols are modified like below, "" to 0, "0" to 10, "K" to 1000, "M" to 10^6, "B" to 10^9.
+```{r}
+rp$PROPDMGEXP<-gsub("0",10,rp$PROPDMGEXP)
+rp$PROPDMGEXP<-gsub("B",1000000000,rp$PROPDMGEXP)
+rp$PROPDMGEXP<-gsub("M",1000000,rp$PROPDMGEXP)
+rp$PROPDMGEXP<-gsub("K",1000,rp$PROPDMGEXP)
+rp$PROPDMGEXP<-gsub("^$",0,rp$PROPDMGEXP)
+rp$CROPDMGEXP<-gsub("B",1000000000,rp$CROPDMGEXP)
+rp$CROPDMGEXP<-gsub("M",1000000,rp$CROPDMGEXP)
+rp$CROPDMGEXP<-gsub("K",1000,rp$CROPDMGEXP)
+rp$CROPDMGEXP<-gsub("^$",0,rp$CROPDMGEXP)
+unique(rp$PROPDMGEXP)
+unique(rp$CROPDMGEXP)
+```
+And they are multiplied with "xxxxDMG". So, I made a new variable by "mutate" function which multiply 
+"xxxxDMG" by them. The new variables are named as "CROP" and "PROP".
+```{r}
+rp$PROPDMGEXP<-as.integer(rp$PROPDMGEXP)
+rp$CROPDMGEXP<-as.integer(rp$CROPDMGEXP)
+rp<-mutate(rp, CROP = CROPDMG * CROPDMGEXP)
+head(rp$CROP,n=100)
+rp<-mutate(rp, PROP = PROPDMG * PROPDMGEXP)
+head(rp$PROP,n=100)
+names(rp)
+unique(rp$EVTYPE)
+```
+Finally, EVTYPE has 516 variables but, they are integrated into 48 proper variables and the others.
+The 48 variables are listed at page 6 of https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf 
+```{r}
+grep("^[ ]",unique(rp$EVTYPE),value = T)
+s2<-gsub("^[ ]+","",rp$EVTYPE)
+s1<-unique(s2)
+grep("^[a]s|^[a]v",s1,ignore.case = T, value = T)
+grep("^[b]li",s1,ignore.case = T,value = T)
+s2<-gsub("Blizzard Summary","BLIZZARD",s2)
+grep("^[c]oa",s1,ignore.case = T,value = T)
+s2<-gsub("^[c]oastal [f]+","COASTAL FLOOD",s2,ignore.case = T)
+grep("c.*s.*t.*l",s1,ignore.case = T,value = T)
+s2<-gsub(".*c.*s.*t.*l.*f.*","Coastal Flood",s2,ignore.case = T)
+s2<-gsub("floo[d].+$","FLOOD",s2,ignore.case = T)
+grep("cold|wind chill",s1,ignore.case = T,value = T)
+```
+There are a lot of cold / wind chill types. So, I classify "BITTER WIND CHILL","BITTER WIND CHILL TEMPERATURES","Cold","COLD","Cold and Frost","COLD AND FROST","COLD AND SNOW","Cold Temperature","COLD TEMPERATURES","COLD WEATHER","COLD WIND CHILL TEMPERATURES","COLD/WIND CHILL","WIND CHILL" into "Cold/Wind Chill" and "Excessive Cold","Extended Cold","Extreme Cold","EXTREME COLD","EXTREME COLD/WIND CHILL", "EXTREME WIND CHILL","RECORD  COLD" are classified into "Extreme Cold/Wind Chill".
+Then, if a word integrated by "/" which consists both two words listed in the 48 variables, basically left word(left of /) is adopted.
+```{r}
+s2<-gsub("^[c]old.*$|^[w]ind chill.*$|^[b]itter.+$","Cold/Wind Chill",s2,ignore.case = T)
+grep("deb",s1,ignore.case = T, value = T)
+```
+There is no "Debris Flow" in the rp dataset, so I dismiss the variable. 
+```{r}
+grep("den",s1,ignore.case = T,value = T)
+s2<-gsub(".*DENSE FOG","Dense Fog",s2,ignore.case = T)
+grep("dro",s1,ignore.case = T, value = T)
+s2<-gsub("drought|SNOW DROUGHT","Drought",s2, ignore.case=T)
+grep("dust",s1,ignore.case = T, value = T)
+s2<-gsub("^[d]ust devil|^[d]ust devel","Dust Devil",s2,ignore.case = T)
+grep("ex",s1,ignore.case = T, value = T)
+grep("heat",s1,ignore.case = T, value = T)
+```
+There are 10 "Heat" types. So, "HEAT","Heat Wave","HEAT WAVE" are classified into "HEAT" and 
+"EXCESSIVE HEAT", "EXCESSIVE HEAT/DROUGHT", "Record Heat", "RECORD HEAT" are classified into "Excessive Heat". 
+```{r}
+s2<-gsub(".+heat.*","Excessive Heat",s2,ignore.case = T)
+grep("extreme|cold|wind chill",s1,ignore.case = T,value = T)
+s2<-gsub("(^ex|^record)(.+cold|.+Wind.*Chill.*)","Extreme Cold/Wind Chill",s2,ignore.case = T)
+grep("fla|flood",s1,ignore.case = T, value = T)
+```
+There are a lot of "Flood" types. So, "FLASH FLOOD","FLASH FLOOD","FLASH FLOOD/FLOOD","FLASH FLOODING",
+"Flood/Flash Flood","FLOOD/FLASH/FLOOD" are classified into "Flash Flood". "LAKESHORE FLOOD" is classified into "Lakeshore Flood". "Flood"and "FLOOD" are classified into "Flood". "Flood/Strong Wind" is classified into "Strong Wind".
+```{r}
+s2<-gsub(".*flash.*","Flash Flood",s2,ignore.case = T)
+s2<-gsub("^flood","Flood",s2,ignore.case = T)
+grep("frost|freez",s1,ignore.case = T, value = T)
+```
+"Frost" and "Freeze" types also confuse you, so "AGRICULTURAL FREEZE",,"Cold and Frost","COLD AND FROST", "Damaging Freeze","DAMAGING FREEZE","Early Frost","FIRST FROST","Freeze", "FREEZE","Frost","FROST", "Frost/Freeze","FROST/FREEZE","HARD FREEZE","LATE FREEZE" are classified into "Frost/Freeze". "Freezing Fog" and "FREEZING FOG" are classified into "Freezing Fog".
+```{r}
+s2<-gsub(".*freeze.*|.*frost.*","Frost/Freeze",s2, ignore.case=T)
+grep("Fun|Clo",s1,ignore.case = T, value = T)
+s2<-gsub("Funnel Cloud.*","Funnel Cloud",s2, ignore.case=T)
+s2<-gsub("Freezing Fog","Freezing Fog",s2, ignore.case=T)
+grep("hail",s1,ignore.case = T, value = T)
+```
+There are a lot of "Hail" types. So, "GUSTY WIND/HAIL","HAIL","Hail(0.75)","HAIL/WIND","LATE SEASON HAIL"
+,"NON SEVERE HAIL","small hail","Small Hail","SMALL HAIL","TSTM WIND/HAIL" are classified into "Hail".
+"MARINE HAIL" is classified into "Marine HAIL".
+```{r}
+s2<-gsub("^hail.*","Hail",s2, ignore.case=T)
+s2<-gsub("^[^m].+hail.*","Hail",s2, ignore.case=T)
+s2<-gsub("^heat wave|^heat","Heat",s2,ignore.case = T)
+grep("rain|snow",s1,ignore.case = T,value=T)
+```
+There are a lot of rain and snow terms. So, "EXCESSIVE RAIN","EXCESSIVE RAINFALL","GUSTY WIND/HVY RAIN",
+"Heavy rain","Heavy Rain","HEAVY RAIN","Heavy Rain and Wind","HEAVY RAIN EFFECTS","Heavy Rain/High Surf",
+"HEAVY RAIN/WIND","HEAVY RAINFALL","LOCALLY HEAVY RAIN","RAIN (HEAVY)","RECORD RAINFALL",
+"Torrential Rainfall","TSTM HEAVY RAIN" are translated into "Heavy Rain". And, "EXCESSIVE SNOW",
+"HEAVY SNOW","Heavy snow shower","HEAVY SNOW SQUALLS","RECORD SNOW","RECORD SNOWFALL","Record Winter Snow"
+are traslated into "Heavy Snow".
+```{r}
+grep("rainfall",s1,ignore.case = T,value = T)
+s2<-gsub(".*heavy rain.*|.*hvy rain.*|rain.+heavy.|^[^m].+rainfall|EXCESSIVE RAIN","Heavy Rain",s2,
+         ignore.case=T)
+grep("snowfall",s1,ignore.case = T,value = T)
+grep("snow[^f]|snow$",s1,ignore.case = T,value = T)
+s2<-gsub("RECORD SNOWFALL|HEAVY SNOW.*|EXCESSIVE SNOW|RECORD[^m]+SNOW","Heavy Snow",s2,ignore.case = T)
+grep("High|Surf",s1,ignore.case = T,value = T)
+s2<-gsub(".*surf.*","High Surf",s2,ignore.case = T)
+s2<-gsub("^high wind.*","High Wind",s2,ignore.case = T)
+s2<-gsub("^HURRICANE.*|.*TYPHOON$","Hurricane (Typhoon)",s2,ignore.case = T)
+s2<-gsub("^Ice ?Storm.*","Ice Storm",s2,ignore.case = T)
+s2<-gsub("lake.e.+","Lake-Effect Snow",s2,ignore.case = T)
+grep("Lightn",s1,ignore.case = T,value = T)
+```
+"LIGHTNING" and "LIGHTNING" are names as "Lightning" and "TSTM WIND AND LIGHTNING" belongs to "Thunderstorm Wind", because TSTM means Thunderstorm.
+```{r}
+s2<-gsub("LIGHTNING","Lightning",s2,ignore.case = T)
+grep("marine",s1,ignore.case = T,value = T)
+s2<-gsub("Marine T.+","Marine Thunderstorm Wind",s2,ignore.case = T)
+s2<-gsub("Rip Current.*","Rip Current",s2,ignore.case = T)
+grep("Seiche",s1,ignore.case = T,value = T)
+s2<-gsub(".*sleet.*","Sleet",s2,ignore.case = T)
+s2<-gsub("Storm Surge.*","Storm Surge/Tide",s2,ignore.case = T)
+s2<-gsub("^[^m]*Strong Wind.*","Strong Wind",s2,ignore.case = T)
+grep("Thunderstorm.*Wind|TSTM.*Wind",s1,ignore.case = T,value = T)
+```
+There are a lot of "Thunderstorm Wind" types. So, "GUSTY THUNDERSTORM WIND","GUSTY THUNDERSTORM WINDS",
+"Thunderstorm Wind","THUNDERSTORM WIND","THUNDERSTORM WIND (G40)","Tstm Wind","TSTM WIND","TSTM WIND",
+"TSTM WIND","TSTM WIND  (G45)","TSTM WIND (41)","TSTM WIND (G35),"TSTM WIND (G40)","TSTM WIND (G45)",     "TSTM WIND (G45)","TSTM WIND 40","TSTM WIND 45","TSTM WIND AND LIGHTNING","TSTM WIND G45","TSTM WINDS"
+are renamed as "Thunderstorm Wind".
+```{r}
+s2<-gsub("^[^m]*Thunderstorm Wind.*|^TSTM W.*ND$|TSTM WiND[^/]+","Thunderstorm Wind",s2,ignore.case = T)
+grep("Tornado",s1,ignore.case = T,value = T)
+s2<-gsub("^Tornado.*","Tornado",s2,ignore.case = T)
+grep("Tropical|Depression",s1,ignore.case = T,value = T)
+grep("Tsunami",s1,ignore.case = T,value = T)
+grep("Volcanic|Ash",s1,ignore.case = T,value = T)
+s2<-gsub("^Volcanic Ash.*","Volcanic Ash",s2,ignore.case = T)
+grep("Water|spout",s1,ignore.case = T,value = T)
+s2<-gsub("^Waterspout.*","Waterspout",s2,ignore.case = T)
+grep("Wild|fire",s1,ignore.case = T,value = T)
+s2<-gsub("Wild.*fire","Wildfire",s2,ignore.case = T)
+grep("Winter.*Storm",s1,ignore.case = T,value = T)
+grep("Winter|Weather",s1,ignore.case = T,value = T)
+s2<-gsub(".*Winter Weather.*","Winter Weather",s2,ignore.case = T)
+```
+Rename EVTYPE names. 
+
+## Result
+So, make a population health plot.
+The top 7 events with the highest total fatalities and injuries are classified into 
+"harmful events for population health".
+```{r}
+rp$EVTYPE<-s2
+arpf<-aggregate(list(FATALITIES=rp$FATALITIES),by=list(EVTYPE=rp$EVTYPE),sum)
+fatalities<-head(arrange(arpf,desc(FATALITIES)),n=7)
+p1<-ggplot(fatalities,aes(x=reorder(EVTYPE,-FATALITIES),y=FATALITIES))+geom_bar(stat = "identity") +labs(x="EVTYPE")
+arpi<-aggregate(list(INJURIES=rp$INJURIES),by=list(EVTYPE=rp$EVTYPE),sum)
+injuries<-head(arrange(arpi,desc(INJURIES)),n=7)
+p2<-ggplot(injuries,aes(x=reorder(EVTYPE,-INJURIES),y=INJURIES))+geom_bar(stat = "identity") +labs(x="EVTYPE")
+grid.arrange(p1,p2,ncol=1,top="harmful events for population health")
+dev.copy(png,file="population health.png")
+dev.off()
+```
+Then, make a economic consequences plot.
+The top 7 events with the highest total "CROP" and "PROP" are classified into 
+"harmful events for economic consequences".
+```{r}
+arpc<-aggregate(list(CROP=rp$CROP),by=list(EVTYPE=rp$EVTYPE),sum)
+fatalities<-head(arrange(arpc,desc(CROP)),n=7)
+p1<-ggplot(fatalities,aes(x=reorder(EVTYPE,-CROP),y=CROP))+geom_bar(stat = "identity") +labs(x="EVTYPE")
+arpp<-aggregate(list(PROP=rp$PROP),by=list(EVTYPE=rp$EVTYPE),sum)
+injuries<-head(arrange(arpp,desc(PROP)),n=7)
+p2<-ggplot(injuries,aes(x=reorder(EVTYPE,-PROP),y=PROP))+geom_bar(stat = "identity") +labs(x="EVTYPE")
+grid.arrange(p1,p2,ncol=1,top="harmful events for economic consequences")
+dev.copy(png,file="economic consequences.png")
+dev.off()
+```
